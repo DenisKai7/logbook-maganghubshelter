@@ -3,6 +3,7 @@ import { api } from '../api';
 import { User } from '../types';
 import { Modal } from './Modal';
 import { useTheme } from '../context/ThemeContext';
+import shelterLogo from '../assets/shelter-logo.jpg';
 import {
   Mail,
   ArrowRight,
@@ -61,8 +62,12 @@ export const LoginView: React.FC<Props> = ({ onLoginSuccess }) => {
       {/* Top Bar with Brand & Theme Switcher */}
       <div className="max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[#0b4e8c] dark:bg-[#0e639c] text-white flex items-center justify-center font-bold text-base shadow-sm ring-2 ring-blue-500/10">
-            S
+          <div className="w-9 h-9 rounded-xl overflow-hidden bg-white shadow-sm ring-2 ring-blue-500/10 flex items-center justify-center p-0.5 border border-slate-200/60 dark:border-transparent">
+            <img
+              src={shelterLogo}
+              alt="Logo Shelter"
+              className="w-full h-full object-contain"
+            />
           </div>
           <div>
             <span className="font-semibold text-slate-900 dark:text-white text-base tracking-tight block leading-tight">

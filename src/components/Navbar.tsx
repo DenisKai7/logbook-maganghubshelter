@@ -1,6 +1,7 @@
 import React from 'react';
 import { User } from '../types';
 import { useTheme } from '../context/ThemeContext';
+import shelterLogo from '../assets/shelter-logo.jpg';
 import {
   LogOut,
   UserCheck,
@@ -51,8 +52,12 @@ export const Navbar: React.FC<Props> = ({ user, onLogout, onOpenChangePin }) => 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand with PT. Shelter Indonesia Gemilang distinction */}
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[#0b4e8c] dark:bg-[#0e639c] text-white flex items-center justify-center font-bold text-sm tracking-tight shadow-sm ring-2 ring-blue-500/10">
-            S
+          <div className="w-9 h-9 rounded-xl overflow-hidden bg-white shadow-sm ring-2 ring-blue-500/10 flex items-center justify-center p-0.5 border border-slate-200/60 dark:border-transparent">
+            <img
+              src={shelterLogo}
+              alt="Logo Shelter"
+              className="w-full h-full object-contain"
+            />
           </div>
           <div>
             <div className="flex items-center gap-2">

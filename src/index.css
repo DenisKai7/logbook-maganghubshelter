@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-shelter-50: #edf5fc;
+  --color-shelter-100: #d6e8f8;
+  --color-shelter-200: #b2d5f3;
+  --color-shelter-300: #7ebbed;
+  --color-shelter-400: #439ce3;
+  --color-shelter-500: #1b80d4;
+  --color-shelter-600: #0e65b7;
+  --color-shelter-700: #0b4e8c; /* Warna Khas PT. Shelter Indonesia Gemilang */
+  --color-shelter-800: #0e4475;
+  --color-shelter-900: #113a62;
+  --color-shelter-950: #0a2542;
+
+  --color-vscode-bg: #1e1e1e;
+  --color-vscode-card: #252526;
+  --color-vscode-panel: #181818;
+  --color-vscode-border: #2d2d2d;
+  --color-vscode-border-light: #383838;
+  --color-vscode-input: #3c3c3c;
+  --color-vscode-blue: #0e639c;
+  --color-vscode-accent: #007acc;
+  --color-vscode-text: #cccccc;
+  --color-vscode-muted: #858585;
+}
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Tasteful, human micro-animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 3s ease-in-out infinite;
+}

@@ -130,7 +130,7 @@ export function getKanbanEndDate(k: KanbanItem): string {
 }
 
 export function getKanbanReview(k: KanbanItem): KanbanReview {
-  const r = (k.Review || 'Menunggu') as KanbanReview;
+  const r = (k.Review || (KANBAN_REVIEW_OPTIONS.includes(k.Status as any) ? k.Status : '') || 'Menunggu') as KanbanReview;
   if (KANBAN_REVIEW_OPTIONS.includes(r)) return r;
   return 'Menunggu';
 }

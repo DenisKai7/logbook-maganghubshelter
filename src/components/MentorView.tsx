@@ -34,6 +34,7 @@ import {
   getDailyNote,
   getDailyEvidence,
   getDailyStatusReview,
+  getDailyMenteeName,
 } from '../types';
 
 import { api, getTodayStr } from '../api';
@@ -89,6 +90,7 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [activeTab, setActiveTab] = useState<TabType>('analytics');
   const [hoveredBarIndex, setHoveredBarIndex] = useState<number | null>(null);
+  const [timeframe, setTimeframe] = useState<'24h' | '7d' | '30d' | 'all'>('7d');
 
   // Review Modal state
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
@@ -180,88 +182,272 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
     });
   }, [data.kanbanItems, data.weeklyPlans, selectedMentee, data.mentees]);
 
-  // Tab & status filtered lists
+  // Tab & review status filtered lists
   const filteredDaily = useMemo(() => {
     return menteeDaily.filter(d => {
-      if (filterStatus !== 'all' && d.Status !== filterStatus) return false;
+      if (filterStatus !== 'all') {
+        const rev = getDailyStatusReview(d);
+        return rev.toLowerCase() === filterStatus.toLowerCase();
+      }
       return true;
     });
   }, [menteeDaily, filterStatus]);
 
   const filteredWeekly = useMemo(() => {
     return menteeWeekly.filter(w => {
-      if (filterStatus !== 'all' && w.Status !== filterStatus) return false;
+      if (filterStatus !== 'all') {
+        const rev = getKanbanReview(w);
+        return rev.toLowerCase() === filterStatus.toLowerCase();
+      }
       return true;
     });
   }, [menteeWeekly, filterStatus]);
 
-  // Key KPI numbers
-  const totalLogs = menteeDaily.length;
-  const approvedDailyCount = useMemo(() => menteeDaily.filter(d => d.Status === 'Disetujui').length, [menteeDaily]);
-  const pendingDailyCount = useMemo(() => menteeDaily.filter(d => d.Status === 'Menunggu').length, [menteeDaily]);
-  const revisionDailyCount = useMemo(() => menteeDaily.filter(d => d.Status === 'Revisi').length, [menteeDaily]);
-  const pendingWeeklyCount = useMemo(() => menteeWeekly.filter(w => w.Status === 'Menunggu').length, [menteeWeekly]);
-  const pendingKanbanReviewCount = useMemo(() => menteeWeekly.filter(w => getKanbanReview(w) === 'Menunggu').length, [menteeWeekly]);
+  // Key KPI numbers per dataset
+  const dailyTotal = menteeDaily.length;
+  const approvedDailyCount = useMemo(() => menteeDaily.filter(d => getDailyStatusReview(d) === 'Disetujui').length, [menteeDaily]);
+  const pendingDailyCount = useMemo(() => menteeDaily.filter(d => getDailyStatusReview(d) === 'Menunggu').length, [menteeDaily]);
+  const revisionDailyCount = useMemo(() => menteeDaily.filter(d => getDailyStatusReview(d) === 'Revisi').length, [menteeDaily]);
+  const dailyRate = dailyTotal > 0 ? (approvedDailyCount / dailyTotal) * 100 : 0;
+  const dailyRateStr = dailyRate % 1 === 0 ? dailyRate.toFixed(0) : dailyRate.toFixed(1).replace('.', ',');
+
+  const kanbanTotal = menteeWeekly.length;
+  const approvedWeeklyCount = useMemo(() => menteeWeekly.filter(w => getKanbanReview(w) === 'Disetujui').length, [menteeWeekly]);
+  const pendingWeeklyCount = useMemo(() => menteeWeekly.filter(w => getKanbanReview(w) === 'Menunggu').length, [menteeWeekly]);
+  const revisionWeeklyCount = useMemo(() => menteeWeekly.filter(w => getKanbanReview(w) === 'Revisi').length, [menteeWeekly]);
+  const kanbanRate = kanbanTotal > 0 ? (approvedWeeklyCount / kanbanTotal) * 100 : 0;
+  const kanbanRateStr = kanbanRate % 1 === 0 ? kanbanRate.toFixed(0) : kanbanRate.toFixed(1).replace('.', ',');
+
+  const totalLogs = dailyTotal;
   const totalPending = pendingDailyCount + pendingWeeklyCount;
-  const totalKanbanPending = pendingKanbanReviewCount;
-  const approvalRate = totalLogs > 0 ? Math.round((approvedDailyCount / totalLogs) * 100) : 0;
+  const totalKanbanPending = pendingWeeklyCount;
+  const approvalRate = Math.round(dailyRate);
 
-  // Obstacle counts
-  const logsWithObstacle = useMemo(() => {
-    return menteeDaily.filter(d => d.Kendala && d.Kendala.trim() !== '' && d.Kendala !== 'Tidak ada kendala.');
-  }, [menteeDaily]);
+  // Obstacle checks matching user specification:
+  // "nilai di dalam ada kendala hanya akan muncul jika status pada log aktivitas peserta 'cancelled' atau 'rescheduled' dan status reviewnya masih 'menunggu', untuk kanban ketika statusnya 'canceled' dan reviewnya 'menunggu'."
+  const isDailyObstacle = (d: DailyActivity) => {
+    const rev = getDailyStatusReview(d);
+    if (rev !== 'Menunggu') return false;
+    const act = (getDailyActivitiesStatus(d) || '').trim().toLowerCase();
+    return act === 'cancelled' || act === 'rescheduled' || act === 'reschedule' || act === 'canceled';
+  };
+  const dailyObstacleCount = useMemo(() => menteeDaily.filter(isDailyObstacle).length, [menteeDaily]);
 
-  // Timeline / Trend Bar Chart Data (grouped by date)
-  const timelineChartData = useMemo(() => {
-    const dateMap: Record<string, { date: string; approved: number; pending: number; revision: number; total: number }> = {};
-    
+  const isKanbanObstacle = (k: KanbanItem) => {
+    const rev = getKanbanReview(k);
+    if (rev !== 'Menunggu') return false;
+    const st = (getKanbanStatus(k) || String(k.Status || '')).trim().toLowerCase();
+    return st === 'canceled' || st === 'cancelled' || st === 'rescheduled' || st === 'reschedule';
+  };
+  const kanbanObstacleCount = useMemo(() => menteeWeekly.filter(isKanbanObstacle).length, [menteeWeekly]);
+
+  // Combined obstacle list for Radar Kendala & Hambatan (Image 7)
+  const obstacleList = useMemo(() => {
+    const list: Array<{
+      id: string;
+      type: 'daily' | 'kanban';
+      peserta: string;
+      date: string;
+      status: string;
+      title: string;
+      note: string;
+      item: DailyActivity | KanbanItem;
+    }> = [];
+
     menteeDaily.forEach(d => {
-      const date = d.Tanggal || 'Tanpa Tanggal';
-      if (!dateMap[date]) {
-        dateMap[date] = { date, approved: 0, pending: 0, revision: 0, total: 0 };
+      const act = (getDailyActivitiesStatus(d) || '').trim().toLowerCase();
+      const isKendala = act === 'cancelled' || act === 'rescheduled' || act === 'reschedule' || act === 'canceled';
+      if (isKendala) {
+        list.push({
+          id: d.Log_ID || String(d.No),
+          type: 'daily',
+          peserta: d.Nama_Peserta || getDailyMenteeName(d, data.mentees),
+          date: getDailyDate(d),
+          status: getDailyActivitiesStatus(d),
+          title: getDailyActivities(d),
+          note: getDailyNote(d) !== '-' ? getDailyNote(d) : (d.Kendala || `Status aktivitas diubah ke ${getDailyActivitiesStatus(d)}`),
+          item: d,
+        });
       }
-      dateMap[date].total += 1;
-      if (d.Status === 'Disetujui') dateMap[date].approved += 1;
-      else if (d.Status === 'Revisi') dateMap[date].revision += 1;
-      else dateMap[date].pending += 1;
     });
 
-    // Sort ascending by date string and take the last 8 dates
-    return Object.values(dateMap)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(-8);
-  }, [menteeDaily]);
+    menteeWeekly.forEach(k => {
+      const st = (getKanbanStatus(k) || String(k.Status || '')).trim().toLowerCase();
+      const isKendala = st === 'canceled' || st === 'cancelled' || st === 'rescheduled' || st === 'reschedule';
+      if (isKendala) {
+        list.push({
+          id: String(k.Plan_ID || k.No),
+          type: 'kanban',
+          peserta: getKanbanPeserta(k, data.mentees),
+          date: getKanbanDueDate(k),
+          status: getKanbanStatus(k),
+          title: getKanbanTask(k),
+          note: getKanbanNotes(k) || `Status task kanban diubah ke ${getKanbanStatus(k)}`,
+          item: k,
+        });
+      }
+    });
+
+    return list;
+  }, [menteeDaily, menteeWeekly, data.mentees]);
+
+  // Legacy alias for compatibility
+  const logsWithObstacle = obstacleList;
+
+  // Timeline / Trend Bar Chart Data with Daily + Kanban bars & Timeframe Filter (Requirement 4 / Image 5)
+  const timelineChartData = useMemo(() => {
+    const dateMap: Record<string, {
+      date: string;
+      dailyTotal: number;
+      dailyApproved: number;
+      dailyPending: number;
+      dailyRevision: number;
+      kanbanTotal: number;
+      kanbanApproved: number;
+      kanbanPending: number;
+      kanbanRevision: number;
+      total: number;
+    }> = {};
+
+    const now = new Date();
+    const getLimitDate = () => {
+      if (timeframe === '24h') {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 1);
+        return d;
+      }
+      if (timeframe === '7d') {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 7);
+        return d;
+      }
+      if (timeframe === '30d') {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 30);
+        return d;
+      }
+      return null;
+    };
+    const limitDate = getLimitDate();
+
+    const isDateWithin = (rawDateStr?: string) => {
+      if (!limitDate || !rawDateStr || rawDateStr === 'Tanpa Tanggal') return true;
+      const parsed = new Date(rawDateStr);
+      if (isNaN(parsed.getTime())) return true;
+      return parsed >= limitDate;
+    };
+
+    // Aggregate Daily Activities
+    menteeDaily.forEach(d => {
+      const date = getDailyDate(d) || 'Tanpa Tanggal';
+      if (!isDateWithin(date)) return;
+      if (!dateMap[date]) {
+        dateMap[date] = {
+          date,
+          dailyTotal: 0,
+          dailyApproved: 0,
+          dailyPending: 0,
+          dailyRevision: 0,
+          kanbanTotal: 0,
+          kanbanApproved: 0,
+          kanbanPending: 0,
+          kanbanRevision: 0,
+          total: 0
+        };
+      }
+      dateMap[date].dailyTotal += 1;
+      dateMap[date].total += 1;
+      const rev = getDailyStatusReview(d);
+      if (rev === 'Disetujui') dateMap[date].dailyApproved += 1;
+      else if (rev === 'Revisi') dateMap[date].dailyRevision += 1;
+      else dateMap[date].dailyPending += 1;
+    });
+
+    // Aggregate Kanban Items
+    menteeWeekly.forEach(k => {
+      let date = getKanbanStartDate(k);
+      if (date === '-') date = getKanbanDueDate(k);
+      if (date === '-') date = k.Tanggal_Input || 'Tanpa Tanggal';
+      if (!isDateWithin(date)) return;
+      if (!dateMap[date]) {
+        dateMap[date] = {
+          date,
+          dailyTotal: 0,
+          dailyApproved: 0,
+          dailyPending: 0,
+          dailyRevision: 0,
+          kanbanTotal: 0,
+          kanbanApproved: 0,
+          kanbanPending: 0,
+          kanbanRevision: 0,
+          total: 0
+        };
+      }
+      dateMap[date].kanbanTotal += 1;
+      dateMap[date].total += 1;
+      const rev = getKanbanReview(k);
+      if (rev === 'Disetujui') dateMap[date].kanbanApproved += 1;
+      else if (rev === 'Revisi') dateMap[date].kanbanRevision += 1;
+      else dateMap[date].kanbanPending += 1;
+    });
+
+    const entries = Object.values(dateMap).sort((a, b) => a.date.localeCompare(b.date));
+    if (timeframe === '24h') return entries.slice(-2);
+    if (timeframe === '7d') return entries.slice(-7);
+    if (timeframe === '30d') return entries.slice(-30);
+    return entries;
+  }, [menteeDaily, menteeWeekly, timeframe]);
 
   const maxTimelineTotal = useMemo(() => {
-    return Math.max(...timelineChartData.map(d => d.total), 4);
+    return Math.max(
+      ...timelineChartData.map(d => Math.max(d.dailyTotal, d.kanbanTotal)),
+      4
+    );
   }, [timelineChartData]);
 
-  // Category Distribution for Donut Chart
-  const categoryChartData = useMemo(() => {
-    const map: Record<string, number> = {};
+  // Division Distribution for Donut Chart (Requirement 5 / Image 6)
+  const divisionChartData = useMemo(() => {
+    const map: Record<string, { count: number; daily: number; kanban: number }> = {};
+    
+    // Group Daily Activities by Mentee's Divisi
     menteeDaily.forEach(d => {
-      const cat = d.Kategori || 'Lainnya';
-      map[cat] = (map[cat] || 0) + 1;
+      const mentee = data.mentees.find(m => m.userId === d.User_ID || (d.Nama_Peserta && m.nama.toLowerCase().includes(d.Nama_Peserta.toLowerCase())));
+      const div = mentee?.divisi || user.divisi || 'Umum';
+      if (!map[div]) map[div] = { count: 0, daily: 0, kanban: 0 };
+      map[div].count += 1;
+      map[div].daily += 1;
     });
 
-    const entries = Object.entries(map).map(([name, count]) => {
-      const meta = CATEGORY_COLORS.find(c => c.name === name) || {
-        name,
-        color: '#64748b',
-        darkColor: '#94a3b8'
-      };
-      const pct = totalLogs > 0 ? (count / totalLogs) * 100 : 0;
+    // Group Kanban items by Mentee's Divisi
+    menteeWeekly.forEach(k => {
+      const pName = getKanbanPeserta(k, data.mentees);
+      const mentee = data.mentees.find(m => m.userId === k.User_ID || (pName && m.nama.toLowerCase().includes(pName.toLowerCase())));
+      const div = mentee?.divisi || user.divisi || 'Umum';
+      if (!map[div]) map[div] = { count: 0, daily: 0, kanban: 0 };
+      map[div].count += 1;
+      map[div].kanban += 1;
+    });
+
+    const totalActiveActions = Object.values(map).reduce((acc, v) => acc + v.count, 0);
+
+    const PALETTE = ['#0b4e8c', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#6366f1'];
+
+    return Object.entries(map).map(([name, val], idx) => {
+      const pct = totalActiveActions > 0 ? Math.round((val.count / totalActiveActions) * 100) : 0;
       return {
         name,
-        count,
-        pct: Math.round(pct),
-        color: meta.color,
-        darkColor: meta.darkColor
+        count: val.count,
+        daily: val.daily,
+        kanban: val.kanban,
+        pct,
+        color: PALETTE[idx % PALETTE.length]
       };
-    });
+    }).sort((a, b) => b.count - a.count);
+  }, [menteeDaily, menteeWeekly, data.mentees, user.divisi]);
 
-    return entries.sort((a, b) => b.count - a.count);
-  }, [menteeDaily, totalLogs]);
+  const totalDivisionEntries = useMemo(() => {
+    return divisionChartData.reduce((acc, c) => acc + c.count, 0);
+  }, [divisionChartData]);
 
   // Mentee Performance Leaderboard / Progress
   const menteePerformance = useMemo(() => {
@@ -600,29 +786,68 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
           ))}
         </div>
 
-        {/* Quiet Quick Metrics Ribbon */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6 mt-6 border-t border-slate-100 dark:border-[#2d2d2d]">
+        {/* Quick Metrics Ribbon (Dynamically adjusts based on activeTab: Analytics = combined, Daily = Daily only, Kanban = Kanban only) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-6 mt-6 border-t border-slate-100 dark:border-[#2d2d2d]">
+          {/* Card 1: Total Log Masuk */}
           <div className="p-3 rounded-xl bg-blue-50/60 dark:bg-[#1e2733] border border-blue-200/50 dark:border-[#264f78]">
             <span className="text-[11px] font-semibold text-[#0b4e8c] dark:text-[#9cdcfe] uppercase tracking-wider block">Total Log Masuk</span>
-            <span className="text-xl font-bold text-slate-900 dark:text-white font-mono mt-0.5 block">{totalLogs}</span>
+            {activeTab === 'analytics' ? (
+              <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white font-mono mt-1 block">
+                Log Aktivitas {dailyTotal} <span className="text-slate-400 dark:text-[#858585] font-normal">|</span> Kanban {kanbanTotal}
+              </span>
+            ) : activeTab === 'daily' ? (
+              <span className="text-xl font-bold text-slate-900 dark:text-white font-mono mt-0.5 block">{dailyTotal}</span>
+            ) : (
+              <span className="text-xl font-bold text-slate-900 dark:text-white font-mono mt-0.5 block">{kanbanTotal}</span>
+            )}
           </div>
 
+          {/* Card 2: Disetujui */}
           <div className="p-3 rounded-xl bg-emerald-50/60 dark:bg-[#1b3424] border border-emerald-200/50 dark:border-[#2e6040]">
             <span className="text-[11px] font-semibold text-emerald-800 dark:text-[#4ec9b0] uppercase tracking-wider block">Disetujui</span>
-            <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-xl font-bold text-emerald-900 dark:text-[#4ec9b0] font-mono">{approvedDailyCount}</span>
-              <span className="text-xs text-emerald-700 dark:text-[#4ec9b0]/80">({approvalRate}%)</span>
-            </div>
+            {activeTab === 'analytics' ? (
+              <span className="text-xs sm:text-sm font-bold text-emerald-900 dark:text-[#4ec9b0] font-mono mt-1 block">
+                Log Aktivitas {approvedDailyCount} ({dailyRateStr}%) <span className="text-emerald-700/60 dark:text-[#4ec9b0]/60 font-normal">|</span> Kanban {approvedWeeklyCount} ({kanbanRateStr}%)
+              </span>
+            ) : activeTab === 'daily' ? (
+              <div className="flex items-baseline gap-1 mt-0.5">
+                <span className="text-xl font-bold text-emerald-900 dark:text-[#4ec9b0] font-mono">{approvedDailyCount}</span>
+                <span className="text-xs text-emerald-700 dark:text-[#4ec9b0]/80">({dailyRateStr}%)</span>
+              </div>
+            ) : (
+              <div className="flex items-baseline gap-1 mt-0.5">
+                <span className="text-xl font-bold text-emerald-900 dark:text-[#4ec9b0] font-mono">{approvedWeeklyCount}</span>
+                <span className="text-xs text-emerald-700 dark:text-[#4ec9b0]/80">({kanbanRateStr}%)</span>
+              </div>
+            )}
           </div>
 
+          {/* Card 3: Butuh Review */}
           <div className="p-3 rounded-xl bg-amber-50/60 dark:bg-[#342c15] border border-amber-200/50 dark:border-[#5a4d22]">
             <span className="text-[11px] font-semibold text-amber-800 dark:text-[#dcdcaa] uppercase tracking-wider block">Butuh Review</span>
-            <span className="text-xl font-bold text-amber-900 dark:text-[#dcdcaa] font-mono mt-0.5 block">{totalPending}</span>
+            {activeTab === 'analytics' ? (
+              <span className="text-xs sm:text-sm font-bold text-amber-900 dark:text-[#dcdcaa] font-mono mt-1 block">
+                Log Aktivitas {pendingDailyCount} <span className="text-amber-700/60 dark:text-[#dcdcaa]/60 font-normal">|</span> Kanban {pendingWeeklyCount}
+              </span>
+            ) : activeTab === 'daily' ? (
+              <span className="text-xl font-bold text-amber-900 dark:text-[#dcdcaa] font-mono mt-0.5 block">{pendingDailyCount}</span>
+            ) : (
+              <span className="text-xl font-bold text-amber-900 dark:text-[#dcdcaa] font-mono mt-0.5 block">{pendingWeeklyCount}</span>
+            )}
           </div>
 
+          {/* Card 4: Ada Kendala */}
           <div className="p-3 rounded-xl bg-rose-50/60 dark:bg-[#341b1d] border border-rose-200/50 dark:border-[#5c2427]">
             <span className="text-[11px] font-semibold text-rose-800 dark:text-[#f48771] uppercase tracking-wider block">Ada Kendala</span>
-            <span className="text-xl font-bold text-rose-900 dark:text-[#f48771] font-mono mt-0.5 block">{logsWithObstacle.length}</span>
+            {activeTab === 'analytics' ? (
+              <span className="text-xs sm:text-sm font-bold text-rose-900 dark:text-[#f48771] font-mono mt-1 block">
+                Log Aktivitas {dailyObstacleCount} <span className="text-rose-700/60 dark:text-[#f48771]/60 font-normal">|</span> Kanban {kanbanObstacleCount}
+              </span>
+            ) : activeTab === 'daily' ? (
+              <span className="text-xl font-bold text-rose-900 dark:text-[#f48771] font-mono mt-0.5 block">{dailyObstacleCount}</span>
+            ) : (
+              <span className="text-xl font-bold text-rose-900 dark:text-[#f48771] font-mono mt-0.5 block">{kanbanObstacleCount}</span>
+            )}
           </div>
         </div>
       </section>
@@ -631,7 +856,7 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-[#2d2d2d] pb-2">
         <nav className="flex space-x-6 sm:space-x-8">
           <button
-            onClick={() => setActiveTab('analytics')}
+            onClick={() => { setActiveTab('analytics'); setFilterStatus('all'); }}
             className={`pb-2.5 text-sm font-semibold transition-colors relative cursor-pointer flex items-center gap-2 ${
               activeTab === 'analytics'
                 ? 'text-[#0b4e8c] dark:text-[#3794ff] border-b-2 border-[#0b4e8c] dark:border-[#3794ff]'
@@ -643,7 +868,7 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
           </button>
 
           <button
-            onClick={() => setActiveTab('daily')}
+            onClick={() => { setActiveTab('daily'); setFilterStatus('all'); }}
             className={`pb-2.5 text-sm font-semibold transition-colors relative cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'daily'
                 ? 'text-[#0b4e8c] dark:text-[#3794ff] border-b-2 border-[#0b4e8c] dark:border-[#3794ff]'
@@ -659,7 +884,7 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
           </button>
 
           <button
-            onClick={() => setActiveTab('weekly')}
+            onClick={() => { setActiveTab('weekly'); setFilterStatus('all'); }}
             className={`pb-2.5 text-sm font-semibold transition-colors relative cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'weekly'
                 ? 'text-[#0b4e8c] dark:text-[#3794ff] border-b-2 border-[#0b4e8c] dark:border-[#3794ff]'
@@ -676,15 +901,20 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
           </button>
         </nav>
 
-        {/* Filter status for tables */}
+        {/* Filter Review for tables (Requirement 7 / Image 8) */}
         {activeTab !== 'analytics' && (
-          <div className="flex items-center gap-1.5 self-start sm:self-center">
-            <span className="text-[11px] text-slate-400 dark:text-[#858585] font-medium">Status:</span>
-            {['all', 'Menunggu', 'Disetujui', 'Revisi'].map(st => (
+          <div className="flex items-center gap-1.5 self-start sm:self-center overflow-x-auto max-w-full pb-1 sm:pb-0">
+            <span className="text-[11px] text-slate-400 dark:text-[#858585] font-medium flex items-center gap-1">
+              <Filter className="w-3 h-3" /> Review:
+            </span>
+            {(activeTab === 'daily'
+              ? ['all', 'Menunggu', 'Revisi', 'Ditolak', 'Disetujui']
+              : ['all', 'Ditugaskan', 'Menunggu', 'Revisi', 'Ditolak', 'Disetujui']
+            ).map(st => (
               <button
                 key={st}
                 onClick={() => setFilterStatus(st)}
-                className={`px-2.5 py-1 text-xs rounded-md transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 text-xs rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                   filterStatus === st
                     ? 'bg-[#0b4e8c] dark:bg-[#0e639c] text-white font-medium shadow-xs'
                     : 'text-slate-600 dark:text-[#858585] hover:bg-slate-100 dark:hover:bg-[#252526]'
@@ -704,40 +934,51 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
         <div className="space-y-6 animate-fade-in-up">
           {/* Row 1: Activity Timeline Chart & Category Donut Chart */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Chart 1: SVG Activity Trend Bar Chart (7 cols) */}
+            {/* Chart 1: SVG 2-Bar Activity & Kanban Trend (7 cols) (Requirement 4 / Image 5) */}
             <div className="lg:col-span-7 bg-white dark:bg-[#252526] rounded-3xl border border-slate-200/90 dark:border-[#2d2d2d] p-6 shadow-xs flex flex-col justify-between">
               <div>
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                   <div>
                     <div className="flex items-center gap-2">
                       <TrendingUp className="w-4 h-4 text-[#0b4e8c] dark:text-[#3794ff]" />
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-tight">
-                        Tren Entri Logbook Aktivitas
+                        Tren Entri Logbook Aktivitas &amp; Kanban
                       </h3>
                     </div>
                     <p className="text-xs text-slate-500 dark:text-[#858585] mt-0.5">
-                      Distribusi harian logbook yang masuk (Disetujui, Menunggu, dan Revisi)
+                      Perbandingan harian entri logbook aktivitas (biru) dan tugas kanban (ungu)
                     </p>
                   </div>
-                  <span className="text-xs font-mono font-semibold text-[#0b4e8c] dark:text-[#9cdcfe] bg-blue-50 dark:bg-[#1e2733] border border-blue-200/60 dark:border-[#264f78] px-2.5 py-1 rounded-lg">
-                    {timelineChartData.length} Tanggal Terakhir
-                  </span>
+                  {/* Timeframe Filter Buttons */}
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-[#1e1e1e] p-1 rounded-xl border border-slate-200 dark:border-[#383838]">
+                    {(['24h', '7d', '30d', 'all'] as const).map(tf => (
+                      <button
+                        key={tf}
+                        type="button"
+                        onClick={() => setTimeframe(tf)}
+                        className={`px-2 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                          timeframe === tf
+                            ? 'bg-[#0b4e8c] dark:bg-[#0e639c] text-white shadow-xs'
+                            : 'text-slate-600 dark:text-[#858585] hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
+                        {tf === '24h' ? '24 Jam' : tf === '7d' ? '7 Hari' : tf === '30d' ? '30 Hari' : 'Semua'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                {/* SVG Stacked Bar Chart */}
+                {/* SVG 2-Bar Chart */}
                 {timelineChartData.length === 0 ? (
                   <div className="py-16 text-center text-xs text-slate-400 dark:text-[#858585]">
-                    Belum ada data logbook untuk ditampilkan.
+                    Belum ada data aktivitas atau kanban pada rentang waktu ini.
                   </div>
                 ) : (
                   <div className="relative pt-4 pb-2">
-                    {/* SVG Canvas */}
-                    <div className="h-56 w-full flex items-end justify-between gap-2 sm:gap-4 px-2 border-b border-slate-200 dark:border-[#383838]">
+                    <div className="h-56 w-full flex items-end justify-between gap-2 sm:gap-3 px-2 border-b border-slate-200 dark:border-[#383838]">
                       {timelineChartData.map((item, idx) => {
-                        const totalHeightPct = Math.min(100, Math.max(12, (item.total / maxTimelineTotal) * 100));
-                        const approvedPct = item.total > 0 ? (item.approved / item.total) * 100 : 0;
-                        const pendingPct = item.total > 0 ? (item.pending / item.total) * 100 : 0;
-                        const revisionPct = item.total > 0 ? (item.revision / item.total) * 100 : 0;
+                        const dailyHeightPct = item.dailyTotal > 0 ? Math.min(100, Math.max(8, (item.dailyTotal / maxTimelineTotal) * 100)) : 0;
+                        const kanbanHeightPct = item.kanbanTotal > 0 ? Math.min(100, Math.max(8, (item.kanbanTotal / maxTimelineTotal) * 100)) : 0;
                         const isHovered = hoveredBarIndex === idx;
 
                         return (
@@ -745,64 +986,61 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
                             key={item.date}
                             onMouseEnter={() => setHoveredBarIndex(idx)}
                             onMouseLeave={() => setHoveredBarIndex(null)}
-                            className="flex-1 flex flex-col items-center h-full justify-end group cursor-pointer relative"
+                            className="flex-1 flex flex-col items-center h-full justify-end group cursor-pointer relative min-w-[28px]"
                           >
                             {/* Floating Tooltip */}
                             {isHovered && (
-                              <div className="absolute -top-12 z-20 bg-slate-900 dark:bg-[#181818] text-white text-[10px] rounded-lg py-1 px-2.5 shadow-lg pointer-events-none whitespace-nowrap border border-slate-700 dark:border-[#383838] animate-fade-in-up">
-                                <span className="font-semibold">{item.date}</span>: {item.total} log ({item.approved} acc, {item.pending} wait, {item.revision} rev)
+                              <div className="absolute -top-14 z-20 bg-slate-900 dark:bg-[#181818] text-white text-[10px] rounded-lg py-1.5 px-3 shadow-lg pointer-events-none whitespace-nowrap border border-slate-700 dark:border-[#383838] animate-fade-in-up">
+                                <span className="font-semibold block mb-0.5">{item.date}</span>
+                                <span className="text-sky-300 block">Log Aktivitas: {item.dailyTotal} ({item.dailyApproved} acc, {item.dailyPending} wait, {item.dailyRevision} rev)</span>
+                                <span className="text-purple-300 block">Kanban: {item.kanbanTotal} ({item.kanbanApproved} acc, {item.kanbanPending} wait, {item.kanbanRevision} rev)</span>
                               </div>
                             )}
 
-                            {/* Number label on top of bar */}
-                            <span className="text-[10px] font-mono text-slate-400 dark:text-[#858585] mb-1 font-semibold">
-                              {item.total}
-                            </span>
+                            {/* 2 Bars Side by Side */}
+                            <div className="w-full flex items-end justify-center gap-1 sm:gap-1.5 h-full">
+                              {/* Bar 1: Daily Activity (Blue) */}
+                              <div className="flex-1 max-w-[18px] flex flex-col items-center justify-end h-full">
+                                {item.dailyTotal > 0 && (
+                                  <span className="text-[9px] font-mono text-[#0b4e8c] dark:text-[#9cdcfe] mb-0.5 font-semibold">
+                                    {item.dailyTotal}
+                                  </span>
+                                )}
+                                <div
+                                  style={{ height: `${dailyHeightPct}%` }}
+                                  className="w-full rounded-t bg-[#0b4e8c] dark:bg-[#0e639c] transition-all duration-300 group-hover:brightness-110 shadow-xs"
+                                  title={`Log Aktivitas: ${item.dailyTotal}`}
+                                />
+                              </div>
 
-                            {/* Stacked Vertical Bar */}
-                            <div
-                              style={{ height: `${totalHeightPct}%` }}
-                              className="w-full max-w-[36px] rounded-t-lg overflow-hidden flex flex-col justify-end transition-all duration-300 group-hover:scale-105 shadow-xs"
-                            >
-                              {/* Revision (top segment) */}
-                              {revisionPct > 0 && (
+                              {/* Bar 2: Kanban (Purple) */}
+                              <div className="flex-1 max-w-[18px] flex flex-col items-center justify-end h-full">
+                                {item.kanbanTotal > 0 && (
+                                  <span className="text-[9px] font-mono text-purple-600 dark:text-[#c586c0] mb-0.5 font-semibold">
+                                    {item.kanbanTotal}
+                                  </span>
+                                )}
                                 <div
-                                  style={{ height: `${revisionPct}%` }}
-                                  className="bg-amber-400 dark:bg-[#cca700] w-full"
-                                  title={`Revisi: ${item.revision}`}
+                                  style={{ height: `${kanbanHeightPct}%` }}
+                                  className="w-full rounded-t bg-purple-600 dark:bg-[#8b5cf6] transition-all duration-300 group-hover:brightness-110 shadow-xs"
+                                  title={`Kanban: ${item.kanbanTotal}`}
                                 />
-                              )}
-                              {/* Pending (middle segment) */}
-                              {pendingPct > 0 && (
-                                <div
-                                  style={{ height: `${pendingPct}%` }}
-                                  className="bg-[#0b4e8c] dark:bg-[#3794ff] w-full"
-                                  title={`Menunggu: ${item.pending}`}
-                                />
-                              )}
-                              {/* Approved (bottom segment) */}
-                              {approvedPct > 0 && (
-                                <div
-                                  style={{ height: `${approvedPct}%` }}
-                                  className="bg-emerald-500 dark:bg-[#4ec9b0] w-full"
-                                  title={`Disetujui: ${item.approved}`}
-                                />
-                              )}
+                              </div>
                             </div>
                           </div>
                         );
                       })}
                     </div>
 
-                    {/* X-axis labels */}
-                    <div className="flex items-center justify-between gap-2 sm:gap-4 px-2 mt-2">
+                    {/* X-axis date labels */}
+                    <div className="flex items-center justify-between gap-2 sm:gap-3 px-2 mt-2">
                       {timelineChartData.map((item) => (
                         <span
                           key={item.date}
                           className="flex-1 text-center text-[10px] font-mono text-slate-400 dark:text-[#858585] truncate"
                           title={item.date}
                         >
-                          {item.date.slice(5)}
+                          {item.date.includes('-') && item.date.length >= 10 ? item.date.slice(5) : item.date}
                         </span>
                       ))}
                     </div>
@@ -811,37 +1049,37 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
               </div>
 
               {/* Chart Legend */}
-              <div className="pt-4 mt-2 border-t border-slate-100 dark:border-[#2d2d2d] flex flex-wrap items-center justify-center gap-4 text-xs">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 dark:bg-[#4ec9b0]" />
-                  <span className="text-slate-600 dark:text-[#cccccc] text-[11px]">Disetujui ({approvedDailyCount})</span>
+              <div className="pt-4 mt-2 border-t border-slate-100 dark:border-[#2d2d2d] flex flex-wrap items-center justify-center gap-6 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-sm bg-[#0b4e8c] dark:bg-[#0e639c]" />
+                  <span className="text-slate-700 dark:text-[#cccccc] text-[11px] font-medium">Log Aktivitas ({dailyTotal})</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-[#0b4e8c] dark:bg-[#3794ff]" />
-                  <span className="text-slate-600 dark:text-[#cccccc] text-[11px]">Menunggu ({pendingDailyCount})</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-amber-400 dark:bg-[#cca700]" />
-                  <span className="text-slate-600 dark:text-[#cccccc] text-[11px]">Revisi ({revisionDailyCount})</span>
+                <div className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-sm bg-purple-600 dark:bg-[#8b5cf6]" />
+                  <span className="text-slate-700 dark:text-[#cccccc] text-[11px] font-medium">Kanban ({kanbanTotal})</span>
                 </div>
               </div>
             </div>
 
-            {/* Chart 2: SVG Donut Category Breakdown (5 cols) */}
+            {/* Chart 2: SVG Donut Division Breakdown (Requirement 5 / Image 6) */}
             <div className="lg:col-span-5 bg-white dark:bg-[#252526] rounded-3xl border border-slate-200/90 dark:border-[#2d2d2d] p-6 shadow-xs flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <PieChart className="w-4 h-4 text-[#0b4e8c] dark:text-[#3794ff]" />
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-tight">
-                      Komposisi Kategori Aktivitas
+                      Aktivitas Berdasarkan Divisi Peserta
                     </h3>
                   </div>
                 </div>
 
-                {categoryChartData.length === 0 ? (
+                <p className="text-xs text-slate-500 dark:text-[#858585] mb-3">
+                  Peserta magang dari divisi mana yang aktif mengisi log aktivitas dan aktif melakukan report dari aktivitas dan tugas yang diberikan:
+                </p>
+
+                {divisionChartData.length === 0 ? (
                   <div className="py-16 text-center text-xs text-slate-400 dark:text-[#858585]">
-                    Belum ada kategori tercatat.
+                    Belum ada data aktivitas divisi.
                   </div>
                 ) : (
                   <div className="flex flex-col sm:flex-row items-center justify-center gap-6 py-2">
@@ -859,56 +1097,60 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
                           className="text-slate-100 dark:text-[#1e1e1e]"
                         />
 
-                        {/* Category slices */}
-                        {categoryChartData.map((slice) => {
-                          const strokeLength = (slice.pct / 100) * circumference;
-                          const offset = -(accumulatedPercent / 100) * circumference;
-                          accumulatedPercent += slice.pct;
+                        {/* Division slices */}
+                        {(() => {
+                          let acc = 0;
+                          return divisionChartData.map((slice) => {
+                            const strokeLength = (slice.pct / 100) * circumference;
+                            const offset = -(acc / 100) * circumference;
+                            acc += slice.pct;
 
-                          return (
-                            <circle
-                              key={slice.name}
-                              cx="50"
-                              cy="50"
-                              r={radius}
-                              fill="transparent"
-                              stroke={slice.color}
-                              strokeWidth="12"
-                              strokeDasharray={`${strokeLength} ${circumference}`}
-                              strokeDashoffset={offset}
-                              className="transition-all duration-500 hover:opacity-80"
-                            />
-                          );
-                        })}
+                            return (
+                              <circle
+                                key={slice.name}
+                                cx="50"
+                                cy="50"
+                                r={radius}
+                                fill="transparent"
+                                stroke={slice.color}
+                                strokeWidth="12"
+                                strokeDasharray={`${strokeLength} ${circumference}`}
+                                strokeDashoffset={offset}
+                                className="transition-all duration-500 hover:opacity-80"
+                              />
+                            );
+                          });
+                        })()}
                       </svg>
 
                       {/* Center Info in Donut */}
                       <div className="absolute text-center">
                         <span className="text-lg font-bold text-slate-900 dark:text-white font-mono block leading-none">
-                          {totalLogs}
+                          {totalDivisionEntries}
                         </span>
                         <span className="text-[10px] text-slate-400 dark:text-[#858585] mt-0.5 block">
-                          Total Log
+                          Total Entri
                         </span>
                       </div>
                     </div>
 
                     {/* Donut Legend */}
                     <div className="flex-1 w-full space-y-2">
-                      {categoryChartData.map((cat) => (
-                        <div key={cat.name} className="flex items-center justify-between text-xs">
+                      {divisionChartData.map((div) => (
+                        <div key={div.name} className="flex items-center justify-between text-xs">
                           <div className="flex items-center gap-2 truncate pr-2">
                             <span
-                              style={{ backgroundColor: cat.color }}
+                              style={{ backgroundColor: div.color }}
                               className="w-2.5 h-2.5 rounded-full shrink-0"
                             />
                             <span className="font-medium text-slate-700 dark:text-[#cccccc] truncate text-[11px]">
-                              {cat.name}
+                              {div.name}
                             </span>
                           </div>
-                          <span className="font-mono text-slate-500 dark:text-[#858585] font-semibold text-[11px] shrink-0">
-                            {cat.count} ({cat.pct}%)
-                          </span>
+                          <div className="text-right shrink-0 font-mono text-[11px]">
+                            <span className="font-semibold text-slate-800 dark:text-white">{div.count}</span>
+                            <span className="text-slate-400 dark:text-[#858585]"> ({div.pct}%)</span>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -918,7 +1160,7 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
 
               <div className="mt-4 pt-3 border-t border-slate-100 dark:border-[#2d2d2d] text-center">
                 <span className="text-[11px] text-slate-400 dark:text-[#858585]">
-                  Proporsi tugas mencerminkan ragam kompetensi peserta magang
+                  Menampilkan proporsi keaktifan peserta magang per divisi kerja
                 </span>
               </div>
             </div>
@@ -996,7 +1238,7 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
               </div>
             </div>
 
-            {/* Obstacle Radar & Attention List (5 cols) */}
+            {/* Obstacle Radar & Attention List (Requirement 6 / Image 7) */}
             <div className="lg:col-span-5 bg-white dark:bg-[#252526] rounded-3xl border border-slate-200/90 dark:border-[#2d2d2d] p-6 shadow-xs flex flex-col justify-between">
               <div>
                 <div className="flex items-center justify-between mb-4">
@@ -1007,68 +1249,111 @@ export const MentorView: React.FC<Props> = ({ user, data, pin, onRefresh }) => {
                     </h3>
                   </div>
                   <span className="text-xs font-mono font-semibold text-rose-800 dark:text-[#f48771] bg-rose-50 dark:bg-[#341b1d] border border-rose-200/60 dark:border-[#5c2427] px-2 py-0.5 rounded">
-                    {logsWithObstacle.length} Laporan
+                    {obstacleList.length} Laporan
                   </span>
                 </div>
 
                 <p className="text-xs text-slate-500 dark:text-[#858585] mb-3">
-                  Aktivitas peserta yang mencatat adanya hambatan teknis dan memerlukan bimbingan mentor:
+                  Aktivitas dan task peserta dengan update status cancelled, rescheduled, atau canceled:
                 </p>
 
-                {logsWithObstacle.length === 0 ? (
+                {obstacleList.length === 0 ? (
                   <div className="py-12 text-center text-xs text-slate-400 dark:text-[#858585] bg-slate-50 dark:bg-[#1e1e1e] rounded-2xl p-4 border border-dashed border-slate-200 dark:border-[#2d2d2d]">
                     <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1.5" />
-                    <span>Tidak ada kendala yang dilaporkan. Semua proses berjalan lancar!</span>
+                    <span>Tidak ada kendala status (Cancelled / Rescheduled / Canceled) yang dilaporkan. Semua proses berjalan lancar!</span>
                   </div>
                 ) : (
                   <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
-                    {logsWithObstacle.slice(0, 4).map((item) => (
+                    {obstacleList.slice(0, 10).map((item) => (
                       <div
-                        key={item.Log_ID}
+                        key={`${item.type}-${item.id}`}
                         className="p-3 rounded-2xl bg-amber-50/60 dark:bg-[#342c15]/60 border border-amber-200/60 dark:border-[#5a4d22] text-xs space-y-1.5"
                       >
-                        <div className="flex items-center justify-between">
-                          <strong className="text-slate-900 dark:text-white font-semibold">
-                            {item.Nama_Peserta}
-                          </strong>
-                          <span className="text-[10px] font-mono text-slate-500 dark:text-[#858585]">
-                            {item.Tanggal}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${
+                              item.type === 'daily'
+                                ? 'bg-blue-100 text-[#0b4e8c] dark:bg-[#1e2733] dark:text-[#9cdcfe]'
+                                : 'bg-purple-100 text-purple-800 dark:bg-[#2e1d38] dark:text-[#c586c0]'
+                            }`}>
+                              {item.type === 'daily' ? 'Daily' : 'Kanban'}
+                            </span>
+                            <strong className="text-slate-900 dark:text-white font-semibold truncate">
+                              {item.peserta}
+                            </strong>
+                          </div>
+                          <span className="text-[10px] font-mono text-slate-500 dark:text-[#858585] shrink-0">
+                            {item.date}
                           </span>
                         </div>
-                        <p className="text-amber-950 dark:text-[#dcdcaa] italic leading-relaxed text-[11px]">
-                          "{item.Kendala}"
-                        </p>
-                        <div className="pt-1 flex items-center justify-between">
-                          <span className="text-[10px] text-slate-500 dark:text-[#858585]">
-                            {item.Kategori}
+
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={item.status} size="sm" />
+                          <span className="text-slate-800 dark:text-[#d4d4d4] font-medium text-[11px] truncate">
+                            {item.title}
                           </span>
+                        </div>
+
+                        {item.note && (
+                          <p className="text-amber-950 dark:text-[#dcdcaa] italic leading-relaxed text-[11px] bg-white/60 dark:bg-[#1e1e1e]/60 p-1.5 rounded-lg border border-amber-200/40 dark:border-[#5a4d22]/40">
+                            "{item.note}"
+                          </p>
+                        )}
+
+                        <div className="pt-1 flex items-center justify-end">
                           <button
-                            onClick={() =>
-                              openReview(
-                                item.Log_ID || String(item.No),
-                                'daily',
-                                item.Nama_Peserta || 'Peserta',
-                                `Aktivitas Tanggal ${item.Date || item.Tanggal || ''}`,
-                                item.Activities || item.Deskripsi_Aktivitas || '',
-                                (item.Status as ItemStatus) || 'Menunggu',
-                                item.Note || item.Catatan_Mentor || '',
-                                item['Achieved Target Evidence'] || item.Output_Link,
-                                item.Note || item.Kendala,
-                                {
-                                  date: getDailyDate(item),
-                                  start: getDailyStart(item),
-                                  end: getDailyEnd(item),
-                                  duration: getDailyDuration(item),
-                                  activitiesStatus: getDailyActivitiesStatus(item),
-                                  targetDesc: getDailyTargetDesc(item),
-                                  targetStatus: getDailyTargetStatus(item),
-                                  note: getDailyNote(item),
-                                }
-                              )
-                            }
+                            onClick={() => {
+                              if (item.type === 'daily') {
+                                const d = item.item as DailyActivity;
+                                openReview(
+                                  d.Log_ID || String(d.No),
+                                  'daily',
+                                  d.Nama_Peserta || getDailyMenteeName(d, data.mentees) || 'Peserta',
+                                  `Aktivitas Tanggal ${getDailyDate(d)}`,
+                                  getDailyActivities(d),
+                                  (getDailyStatusReview(d) as ItemStatus) || 'Menunggu',
+                                  getDailyNote(d),
+                                  getDailyEvidence(d),
+                                  d.Kendala || getDailyNote(d),
+                                  {
+                                    date: getDailyDate(d),
+                                    start: getDailyStart(d),
+                                    end: getDailyEnd(d),
+                                    duration: getDailyDuration(d),
+                                    activitiesStatus: getDailyActivitiesStatus(d),
+                                    targetDesc: getDailyTargetDesc(d),
+                                    targetStatus: getDailyTargetStatus(d),
+                                    note: getDailyNote(d),
+                                  }
+                                );
+                              } else {
+                                const k = item.item as KanbanItem;
+                                openReview(
+                                  String(k.Plan_ID || k.No),
+                                  'kanban',
+                                  getKanbanPeserta(k, data.mentees),
+                                  `Task Kanban: ${getKanbanTask(k)}`,
+                                  getKanbanTask(k),
+                                  (getKanbanReview(k) as ItemStatus) || 'Menunggu',
+                                  getKanbanNotes(k),
+                                  getKanbanEvidence(k),
+                                  undefined,
+                                  {
+                                    priority: getKanbanPriority(k),
+                                    kanbanStatus: getKanbanStatus(k),
+                                    dueDate: getKanbanDueDate(k),
+                                    kanbanStart: getKanbanStartDate(k),
+                                    kanbanEnd: getKanbanEndDate(k),
+                                    evidence: getKanbanEvidence(k),
+                                    assignedTo: getKanbanPeserta(k, data.mentees),
+                                    mentorName: user.nama
+                                  }
+                                );
+                              }
+                            }}
                             className="text-[11px] font-semibold text-[#0b4e8c] dark:text-[#9cdcfe] hover:underline cursor-pointer flex items-center gap-1"
                           >
-                            <span>Beri Solusi</span>
+                            <span>Tinjau</span>
                             <ArrowUpRight className="w-3 h-3" />
                           </button>
                         </div>

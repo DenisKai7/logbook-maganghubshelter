@@ -137,35 +137,46 @@ export const PesertaView: React.FC<Props> = ({ user, data, pin, onRefresh }) => 
   };
 
   // Stats calculation
-  const approvedDaily = data.dailyActivities.filter(d => {
-    return getDailyStatusReview(d) === 'Disetujui';
-  }).length;
-  const inProgressDaily = data.dailyActivities.filter(d => {
-    const st = getDailyActivitiesStatus(d);
-    return st === 'On Progress' && getDailyStatusReview(d) !== 'Disetujui';
-  }).length;
-  const totalMinutes = data.dailyActivities.reduce((acc, d) => {
-    const dur = Number(d.Duration);
-    return isNaN(dur) ? acc : acc + dur;
-  }, 0);
-
-  // Kanban Items list (using kanbanItems or weeklyPlans)
   const currentKanbanList: KanbanItem[] = useMemo(() => {
     return data.kanbanItems || data.weeklyPlans || [];
   }, [data.kanbanItems, data.weeklyPlans]);
-  const completedKanban = currentKanbanList.filter(k => getKanbanStatus(k) === 'Done').length;
 
   // Review status datasets for Daily Activities
+  const dailyMenunggu = useMemo(() => data.dailyActivities.filter(d => getDailyStatusReview(d) === 'Menunggu'), [data.dailyActivities]);
   const dailyDitugaskan = useMemo(() => data.dailyActivities.filter(d => getDailyStatusReview(d) === 'Ditugaskan'), [data.dailyActivities]);
   const dailyRevisi = useMemo(() => data.dailyActivities.filter(d => getDailyStatusReview(d) === 'Revisi'), [data.dailyActivities]);
   const dailyDitolak = useMemo(() => data.dailyActivities.filter(d => getDailyStatusReview(d) === 'Ditolak'), [data.dailyActivities]);
   const dailyDisetujui = useMemo(() => data.dailyActivities.filter(d => getDailyStatusReview(d) === 'Disetujui'), [data.dailyActivities]);
 
   // Review status datasets for Kanban Items
+  const kanbanMenunggu = useMemo(() => currentKanbanList.filter(k => getKanbanReview(k) === 'Menunggu'), [currentKanbanList]);
   const kanbanDitugaskan = useMemo(() => currentKanbanList.filter(k => getKanbanReview(k) === 'Ditugaskan'), [currentKanbanList]);
   const kanbanRevisi = useMemo(() => currentKanbanList.filter(k => getKanbanReview(k) === 'Revisi'), [currentKanbanList]);
   const kanbanDitolak = useMemo(() => currentKanbanList.filter(k => getKanbanReview(k) === 'Ditolak'), [currentKanbanList]);
   const kanbanDisetujui = useMemo(() => currentKanbanList.filter(k => getKanbanReview(k) === 'Disetujui'), [currentKanbanList]);
+
+  // Calculate week-of-month and date string for "Minggu Ini"
+  const weekOfMonthInfo = useMemo(() => {
+    let d = new Date();
+    if (data.today && data.today.includes('-')) {
+      const parts = data.today.split('-');
+      if (parts.length === 3) {
+        d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      }
+    }
+    const months = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    const dateNum = d.getDate();
+    const monthName = months[d.getMonth()];
+    const year = d.getFullYear();
+    const weekNum = Math.ceil(dateNum / 7);
+    return {
+      dateStr: `${dateNum} ${monthName} ${year}`,
+      weekLabel: `Minggu ke-${weekNum} ${monthName}`,
+    };
+  }, [data.today]);
 
   // Tab & status filtered lists
   const filteredDaily = useMemo(() => {
@@ -535,29 +546,45 @@ export const PesertaView: React.FC<Props> = ({ user, data, pin, onRefresh }) => 
           </div>
         </div>
 
-        {/* Quiet Metric Ribbon */}
+        {/* Metric Ribbon */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-6 mt-6 border-t border-slate-100 dark:border-[#2d2d2d]">
           <div className="p-3 rounded-xl bg-blue-50/60 dark:bg-[#1e2733] border border-blue-200/50 dark:border-[#264f78]">
             <span className="text-[11px] font-semibold text-[#0b4e8c] dark:text-[#9cdcfe] uppercase tracking-wider block">Minggu Ini</span>
-            <span className="text-base font-semibold text-slate-900 dark:text-white font-mono mt-0.5 block">{data.currentWeek}</span>
+            <span className="text-base font-semibold text-slate-900 dark:text-white font-mono mt-0.5 block truncate">
+              {weekOfMonthInfo.weekLabel}
+            </span>
+            <span className="text-[11px] text-slate-500 dark:text-[#858585] block truncate mt-0.5">
+              {weekOfMonthInfo.dateStr}
+            </span>
           </div>
 
           <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#1e1e1e] border border-slate-200/70 dark:border-[#2d2d2d]">
             <span className="text-[11px] font-medium text-slate-500 dark:text-[#858585] uppercase tracking-wider block">Total Aktivitas</span>
-            <span className="text-base font-semibold text-slate-900 dark:text-white font-mono mt-0.5 block">{data.dailyActivities.length} Baris</span>
+            <span className="text-base font-semibold text-slate-900 dark:text-white font-mono mt-0.5 block">
+              {dailyMenunggu.length} / {dailyDisetujui.length}
+            </span>
+            <span className="text-[11px] text-slate-400 dark:text-[#858585] block truncate mt-0.5">
+              Menunggu / Disetujui
+            </span>
           </div>
 
           <div className="p-3 rounded-xl bg-emerald-50/60 dark:bg-[#1b3424] border border-emerald-200/50 dark:border-[#2e6040]">
-            <span className="text-[11px] font-semibold text-emerald-800 dark:text-[#4ec9b0] uppercase tracking-wider block">Kanban Done</span>
+            <span className="text-[11px] font-semibold text-emerald-800 dark:text-[#4ec9b0] uppercase tracking-wider block">Total Kanban</span>
             <span className="text-base font-semibold text-emerald-900 dark:text-[#4ec9b0] font-mono mt-0.5 block">
-              {completedKanban} / {currentKanbanList.length}
+              {kanbanMenunggu.length} / {kanbanDisetujui.length}
+            </span>
+            <span className="text-[11px] text-emerald-700/80 dark:text-[#4ec9b0]/80 block truncate mt-0.5">
+              Menunggu / Disetujui
             </span>
           </div>
 
           <div className="p-3 rounded-xl bg-amber-50/60 dark:bg-[#342c15] border border-amber-200/50 dark:border-[#5a4d22]">
-            <span className="text-[11px] font-semibold text-amber-800 dark:text-[#dcdcaa] uppercase tracking-wider block">Total Durasi Log</span>
+            <span className="text-[11px] font-semibold text-amber-800 dark:text-[#dcdcaa] uppercase tracking-wider block truncate">Revisi Daily Activity | Kanban</span>
             <span className="text-base font-semibold text-slate-900 dark:text-white font-mono mt-0.5 block">
-              {totalMinutes} <span className="text-xs font-normal text-slate-400 dark:text-[#858585]">menit ({(totalMinutes / 60).toFixed(1)} jam)</span>
+              {dailyRevisi.length} | {kanbanRevisi.length}
+            </span>
+            <span className="text-[11px] text-amber-700/80 dark:text-[#dcdcaa]/80 block truncate mt-0.5">
+              {dailyRevisi.length} Daily • {kanbanRevisi.length} Kanban
             </span>
           </div>
         </div>
@@ -631,12 +658,15 @@ export const PesertaView: React.FC<Props> = ({ user, data, pin, onRefresh }) => 
           </button>
         </nav>
 
-        {/* Filter status buttons matching MentorView */}
+        {/* Filter status buttons matching requirements */}
         <div className="flex items-center gap-1.5 self-start sm:self-center overflow-x-auto max-w-full pb-1 sm:pb-0">
           <span className="text-[11px] text-slate-400 dark:text-[#858585] font-medium flex items-center gap-1">
-            <Filter className="w-3 h-3" /> Status:
+            <Filter className="w-3 h-3" /> Review:
           </span>
-          {['all', 'Ditugaskan', 'Revisi', 'Ditolak', 'Disetujui', 'Menunggu'].map(st => (
+          {(activeTab === 'daily'
+            ? ['all', 'Menunggu', 'Revisi', 'Ditolak', 'Disetujui']
+            : ['all', 'Ditugaskan', 'Menunggu', 'Revisi', 'Ditolak', 'Disetujui']
+          ).map(st => (
             <button
               key={st}
               onClick={() => setFilterStatus(st)}
